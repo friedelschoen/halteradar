@@ -1,0 +1,193 @@
+body {
+	font-family: sans-serif;
+	max-width: 1100px;
+	margin: 2rem auto;
+	padding: 0 1rem;
+}
+table {
+	width: 100%;
+	border-collapse: collapse;
+/*    table-layout: fixed;*/
+}
+
+th, td {
+	padding: .5rem;
+	border-bottom: 1px solid #ddd;
+	text-align: left;
+}
+.delay {
+	color: #b00020;
+	font-weight: bold;
+}
+.cancelled {
+	text-decoration: line-through;
+	color: #777;
+}
+.date-row {
+    background-color: #eee;
+    text-align: center;
+    font-weight: bold;
+}
+.terminal {
+    font-style: italic;
+    color: #777;
+}
+.now-row td {
+    padding: 0;
+	border-bottom: 0;
+}
+
+.now-line {
+    border-top: 2px solid #b00020;
+	text-align: center;
+	font-size: .8rem;
+	color: #b00020;
+	line-height: 0;
+}
+
+.now-line span {
+	background: white;
+	padding: 0 .5rem;
+	position: relative;
+	top: -.1rem;
+}
+.departure-row.has-next td {
+	border-bottom: 0;
+}
+
+.context-row td {
+	padding: .15rem .5rem;
+	border-bottom: 0;
+	font-size: .75rem;
+	color: #777;
+	line-height: 1.2;
+	padding-left: 1.2rem;
+}
+
+.context-row b {
+	font-weight: 500;
+	color: #444;
+}
+
+.context-row.previous td {
+	padding-top: .45rem;
+}
+
+.context-row.next td {
+	padding-bottom: .45rem;
+	border-bottom: 1px solid #ddd;
+}
+
+.context-row.previous + .departure-row td {
+	border-top: 0;
+}
+
+.controls {
+	border: 1px solid #ddd;
+	border-radius: 6px;
+	padding: 1rem;
+	margin-bottom: 1.5rem;
+	background: #fafafa;
+}
+
+.controls-form {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 1rem;
+	align-items: flex-end;
+}
+
+.field-group {
+	flex: 1 1 300px;
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+}
+
+.field-inline {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.actions {
+	margin-left: auto;
+}
+
+input[type="text"] {
+	padding: 0.4rem 0.5rem;
+	border: 1px solid #ccc;
+	border-radius: 4px;
+	width: 100%;
+	box-sizing: border-box;
+}
+
+input[type="submit"] {
+	padding: 0.45rem 0.8rem;
+	border: 1px solid #ccc;
+	background: white;
+	color: #333;
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+input[type="submit"]:hover {
+	background: #eee;
+}
+
+.autocomplete {
+	position: relative;
+}
+
+.autocomplete-results {
+	position: absolute;
+	top: 100%;
+	left: 0;
+	right: 0;
+	background: white;
+	border: 1px solid #ccc;
+	border-top: none;
+	max-height: 200px;
+	overflow-y: auto;
+	z-index: 10;
+}
+
+.autocomplete-results div {
+	padding: 0.4rem 0.5rem;
+	cursor: pointer;
+}
+
+.autocomplete-results div:hover {
+	background: #eee;
+}
+
+@media (max-width: 600px) {
+	.context-row td {
+		font-size: .7rem;
+		padding: .1rem .4rem;
+	}
+
+	th, td {
+	    padding: .3rem;
+        font-size: .7rem;
+	}
+}
+
+.footer {
+	margin-top: 3rem;
+	padding-top: 1rem;
+	border-top: 1px solid #ddd;
+
+	font-size: 0.8rem;
+	color: #666;
+	text-align: center;
+}
+
+.footer a {
+	color: inherit;
+	text-decoration: underline;
+}
+
+.footer a:hover {
+	color: #000;
+}
