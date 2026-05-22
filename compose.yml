@@ -11,7 +11,7 @@ services:
 
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./prosgresql.conf:/etc/postgresql/postgresql.conf 
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro 
       - ./db_init:/docker-entrypoint-initdb.d:ro
 
     healthcheck:
@@ -30,8 +30,6 @@ services:
       - api_server
     ports:
       - "6680:80"
-    volumes:
-      - ./static/gtfs-nl.zip:/usr/share/nginx/html/gtfs-nl.zip
 
   realtime_ingest:
     build: realtime_ingest
