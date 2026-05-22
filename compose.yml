@@ -58,24 +58,6 @@ services:
       POSTGRES: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       PGSSLMODE: disable
 
-
-
-  gtfs_updater:
-    build: gtfs_updater
-    restart: unless-stopped
-
-    depends_on:
-      postgres: 
-        condition: service_healthy
-      static_server: 
-        condition: service_started
-
-    environment:
-      POSTGRES: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      GTFS_URL: ${GTFS_URL}
-
-      PGSSLMODE: disable
-
   api_server:
     build: api_server
     restart: unless-stopped

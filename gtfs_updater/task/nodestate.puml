@@ -1,0 +1,27 @@
+@startuml
+
+title node.state lifecycle
+skinparam shadowing false
+
+	[*] --> Unseen
+
+	Unseen --> Visiting : visit()
+	Visiting --> Visited : dependencies resolved
+	Visiting --> Failed : cycle / missing dependency
+
+	Visited --> Pending : graph finalized
+
+	Pending --> Skipped : NeedsRun() == false
+	Pending --> Running : NeedsRun() == true
+
+	Running --> Done : Execute() ok
+	Running --> Failed : Execute() error
+
+	Done --> Cleaned : usersleft == 0\nCleanup() ok
+	Done --> Failed : Cleanup() error
+
+	Skipped --> [*]
+	Cleaned --> [*]
+	Failed --> [*]
+
+@enduml

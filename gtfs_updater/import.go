@@ -17,10 +17,43 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
-import "database/sql"
+type ImportTask struct {
+	tableName    string
+	filename     string
+	query        string
+	deps         []string
+	rowProcessor func(server *Server, row map[string]string) []any
+}
 
-func importAgency(tx *sql.Tx, feedRef int64, a string, agencies map[string]struct{}) error {
-	stmt, err := tx.Prepare(`
+func (t ImportTask) NeedsRun(server *Server) (bool, error) {
+	query := "SELECT EXISTS(SELECT 1 FROM " + t.tableName + " WHERE feed_ref = $1)"
+
+	var exists bool
+	err := server.db.QueryRow(query, server.feedRef).Scan(&exists)
+	if err != nil {
+		return true, err
+	}
+	return !exists, nil
+}
+
+func (t ImportTask) Group() string {
+	return t.tableName
+}
+
+func (t ImportTask) Execute(server *Server, progress func(float64)) error {
+	return server.insertCSV(progress, t.filename, t.query, t.rowProcessor)
+}
+
+func (t ImportTask) Cleanup(*Server) error { return nil }
+
+func (t ImportTask) Dependencies() []string {
+	return append([]string{"feed_ref", "archive"}, t.deps...)
+}
+
+var importAgenciesTask = ImportTask{
+	tableName: "gtfs_agency",
+	filename:  "agency.txt",
+	query: `
 			COPY gtfs_agency (
 				feed_ref,
 				agency_id,
@@ -29,58 +62,54 @@ func importAgency(tx *sql.Tx, feedRef int64, a string, agencies map[string]struc
 				agency_timezone,
 				agency_phone
 			) FROM STDIN
-		`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	return insertCSV(stmt, a, "agency.txt", func(row map[string]string) []any {
+		`,
+	rowProcessor: func(server *Server, row map[string]string) []any {
 		agencyID := row["agency_id"]
-		if _, ok := agencies[agencyID]; !ok {
+		if _, ok := server.agencies[agencyID]; !ok {
 			return nil
 		}
 		return []any{
-			feedRef,
+			server.feedRef,
 			row["agency_id"],
 			row["agency_name"],
 			nullString(row["agency_url"]),
 			nullString(row["agency_timezone"]),
 			nullString(row["agency_phone"]),
 		}
-	}, nil)
+	},
 }
 
-func importCalendarDates(tx *sql.Tx, feedRef int64, a string, services map[string]struct{}) error {
-	stmt, err := tx.Prepare(`
+var importCalendarDatesTask = ImportTask{
+	tableName: "gtfs_calendar_dates",
+	filename:  "calendar_dates.txt",
+	deps:      []string{"collect_trips"},
+	query: `
 			COPY gtfs_calendar_dates (
 				feed_ref,
 				service_id,
 				date,
 				exception_type
 			) FROM STDIN
-		`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	return insertCSV(stmt, a, "calendar_dates.txt", func(row map[string]string) []any {
+		`,
+	rowProcessor: func(server *Server, row map[string]string) []any {
 		serviceID := row["service_id"]
-		if _, ok := services[serviceID]; !ok {
+		if _, ok := server.services[serviceID]; !ok {
 			return nil
 		}
 		return []any{
-			feedRef,
+			server.feedRef,
 			row["service_id"],
 			parseGTFSDate(row["date"]),
 			parseInt(row["exception_type"]),
 		}
-	}, nil)
+	},
 }
 
-func importRoutes(tx *sql.Tx, feedRef int64, a string, routes map[string]struct{}) error {
-	stmt, err := tx.Prepare(`
+var importRoutesTask = ImportTask{
+	tableName: "gtfs_routes",
+	filename:  "routes.txt",
+	deps:      []string{"collect_routes", "import_agencies"},
+	query: `
 			COPY gtfs_routes (
 				feed_ref,
 				route_id,
@@ -93,20 +122,15 @@ func importRoutes(tx *sql.Tx, feedRef int64, a string, routes map[string]struct{
 				route_text_color,
 				route_url
 			) FROM STDIN
-		`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	return insertCSV(stmt, a, "routes.txt", func(row map[string]string) []any {
+		`,
+	rowProcessor: func(server *Server, row map[string]string) []any {
 		routeID := row["route_id"]
-		if _, ok := routes[routeID]; !ok {
+		if _, ok := server.routes[routeID]; !ok {
 			return nil
 		}
 
 		return []any{
-			feedRef,
+			server.feedRef,
 			routeID,
 			row["agency_id"],
 			nullString(row["route_short_name"]),
@@ -117,11 +141,14 @@ func importRoutes(tx *sql.Tx, feedRef int64, a string, routes map[string]struct{
 			nullString(row["route_text_color"]),
 			nullString(row["route_url"]),
 		}
-	}, nil)
+	},
 }
 
-func importShapes(tx *sql.Tx, feedRef int64, a string, shapes map[string]struct{}) error {
-	stmt, err := tx.Prepare(`
+var importShapesTask = ImportTask{
+	tableName: "gtfs_shapes",
+	filename:  "shapes.txt",
+	deps:      []string{"collect_trips"},
+	query: `
 			COPY gtfs_shapes (
 				feed_ref,
 				shape_id,
@@ -130,30 +157,28 @@ func importShapes(tx *sql.Tx, feedRef int64, a string, shapes map[string]struct{
 				shape_pt_lon,
 				shape_dist_traveled
 			) FROM STDIN
-		`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	return insertCSV(stmt, a, "shapes.txt", func(row map[string]string) []any {
+		`,
+	rowProcessor: func(server *Server, row map[string]string) []any {
 		shapeID := row["shape_id"]
-		if _, ok := shapes[shapeID]; !ok {
+		if _, ok := server.shapes[shapeID]; !ok {
 			return nil
 		}
 		return []any{
-			feedRef,
+			server.feedRef,
 			row["shape_id"],
 			parseInt(row["shape_pt_sequence"]),
 			parseFloat(row["shape_pt_lat"]),
 			parseFloat(row["shape_pt_lon"]),
 			parseNullableFloat(row["shape_dist_traveled"]),
 		}
-	}, nil)
+	},
 }
 
-func importStops(tx *sql.Tx, feedRef int64, a string, stops map[string]struct{}) error {
-	stmt, err := tx.Prepare(`
+var importStopsTask = ImportTask{
+	tableName: "gtfs_stops",
+	filename:  "stops.txt",
+	deps:      []string{"collect_stops"},
+	query: `
 			COPY gtfs_stops (
 				feed_ref,
 				stop_id,
@@ -165,22 +190,16 @@ func importStops(tx *sql.Tx, feedRef int64, a string, stops map[string]struct{})
 				parent_station,
 				stop_timezone,
 				wheelchair_boarding,
-				platform_code,
 				zone_id
 			) FROM STDIN
-		`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	return insertCSV(stmt, a, "stops.txt", func(row map[string]string) []any {
+		`,
+	rowProcessor: func(server *Server, row map[string]string) []any {
 		stopID := row["stop_id"]
-		if _, ok := stops[stopID]; !ok {
+		if tr, ok := server.stops[stopID]; !ok || tr[0] != "" {
 			return nil
 		}
 		return []any{
-			feedRef,
+			server.feedRef,
 			stopID,
 			nullString(row["stop_code"]),
 			nullString(row["stop_name"]),
@@ -190,14 +209,16 @@ func importStops(tx *sql.Tx, feedRef int64, a string, stops map[string]struct{})
 			nullString(row["parent_station"]),
 			nullString(row["stop_timezone"]),
 			parseNullableInt(row["wheelchair_boarding"]),
-			nullString(row["platform_code"]),
 			nullString(row["zone_id"]),
 		}
-	}, nil)
+	},
 }
 
-func importTrips(tx *sql.Tx, feedRef int64, a string, routes map[string]struct{}) error {
-	stmt, err := tx.Prepare(`
+var importTripsTask = ImportTask{
+	tableName: "gtfs_trips",
+	filename:  "trips.txt",
+	deps:      []string{"collect_routes", "import_routes"},
+	query: `
 			COPY gtfs_trips (
 				feed_ref,
 				route_id,
@@ -213,19 +234,15 @@ func importTrips(tx *sql.Tx, feedRef int64, a string, routes map[string]struct{}
 				wheelchair_accessible,
 				bikes_allowed
 			) FROM STDIN
-		`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
+		`,
 
-	return insertCSV(stmt, a, "trips.txt", func(row map[string]string) []any {
+	rowProcessor: func(server *Server, row map[string]string) []any {
 		routeID := row["route_id"]
-		if _, ok := routes[routeID]; !ok {
+		if _, ok := server.routes[routeID]; !ok {
 			return nil
 		}
 		return []any{
-			feedRef,
+			server.feedRef,
 			routeID,
 			row["service_id"],
 			row["trip_id"],
@@ -239,16 +256,20 @@ func importTrips(tx *sql.Tx, feedRef int64, a string, routes map[string]struct{}
 			parseNullableInt(row["wheelchair_accessible"]),
 			parseNullableInt(row["bikes_allowed"]),
 		}
-	}, nil)
+	},
 }
 
-func importStopTimes(tx *sql.Tx, feedRef int64, a string, trips map[string]struct{}) error {
-	stmt, err := tx.Prepare(`
+var importStopTimesTask = ImportTask{
+	tableName: "gtfs_stop_times",
+	filename:  "stop_times.txt",
+	deps:      []string{"collect_stop_times", "collect_trips", "collect_stops", "import_trips", "import_stops"},
+	query: `
 			COPY gtfs_stop_times (
 				feed_ref,
 				trip_id,
 				stop_sequence,
 				stop_id,
+				platform_code,
 				stop_headsign,
 				arrival_time,
 				departure_time,
@@ -258,22 +279,24 @@ func importStopTimes(tx *sql.Tx, feedRef int64, a string, trips map[string]struc
 				shape_dist_traveled,
 				fare_units_traveled
 			) FROM STDIN
-		`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	return insertCSV(stmt, a, "stop_times.txt", func(row map[string]string) []any {
+		`,
+	rowProcessor: func(server *Server, row map[string]string) []any {
 		tripID := row["trip_id"]
-		if _, ok := trips[tripID]; !ok {
+		if _, ok := server.trips[tripID]; !ok {
 			return nil
 		}
+		stopID := row["stop_id"]
+		platformCode := ""
+		if tr, ok := server.stops[stopID]; ok && tr[0] != "" {
+			stopID = tr[0]
+			platformCode = tr[1]
+		}
 		return []any{
-			feedRef,
+			server.feedRef,
 			tripID,
 			parseInt(row["stop_sequence"]),
-			row["stop_id"],
+			stopID,
+			nullString(platformCode),
 			nullString(row["stop_headsign"]),
 			nullString(row["arrival_time"]),
 			nullString(row["departure_time"]),
@@ -283,5 +306,5 @@ func importStopTimes(tx *sql.Tx, feedRef int64, a string, trips map[string]struc
 			parseNullableFloat(row["shape_dist_traveled"]),
 			parseNullableInt(row["fare_units_traveled"]),
 		}
-	}, nil)
+	},
 }

@@ -98,7 +98,6 @@ CREATE TABLE IF NOT EXISTS gtfs_stops (
 	parent_station TEXT,
 	stop_timezone TEXT,
 	wheelchair_boarding SMALLINT,
-	platform_code TEXT,
 	zone_id TEXT,
 
 	PRIMARY KEY (feed_ref, stop_id),
@@ -135,12 +134,13 @@ CREATE TABLE IF NOT EXISTS gtfs_trips (
     UNIQUE (feed_ref, service_id, realtime_trip_id, realtime_trip_sequence)
 );
 
-CREATE TABLE IF NOT EXISTS gtfs_stop_times (
+CREATE UNLOGGED TABLE IF NOT EXISTS gtfs_stop_times (
 	feed_ref BIGINT NOT NULL REFERENCES gtfs_feeds(id) ON DELETE CASCADE,
 
 	trip_id TEXT NOT NULL,
 	stop_sequence INTEGER NOT NULL,
 	stop_id TEXT NOT NULL,
+    platform_code TEXT,
 	stop_headsign TEXT,
 	arrival_time INTERVAL,
 	departure_time INTERVAL,
@@ -186,9 +186,9 @@ CREATE UNLOGGED TABLE IF NOT EXISTS gtfs_stop_events (
 
 	stop_sequence INTEGER NOT NULL,
 	stop_id TEXT NOT NULL,
+    platform_code TEXT,
 	stop_code TEXT,
 	stop_name TEXT,
-	platform_code TEXT,
 
 	stop_headsign TEXT,
 	trip_headsign TEXT,

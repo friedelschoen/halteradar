@@ -17,68 +17,102 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
-func collectRoutes(a string, agencies map[string]struct{}) (routes map[string]struct{}, _ error) {
-	routes = make(map[string]struct{})
-	return routes, iterCSV(a, "routes.txt", func(row map[string]string) error {
-		agencyID := row["agency_id"]
-		if _, ok := agencies[agencyID]; !ok {
-			return nil
-		}
-		routeID := row["route_id"]
-		routes[routeID] = struct{}{}
-		return nil
-	})
+type CollectTask struct {
+	deps    []string
+	execute func(server *Server, progress func(float64)) error
 }
 
-func collectStops(a string, stops map[string]struct{}) error {
-	stations := make(map[string]struct{})
-	err := iterCSV(a, "stops.txt", func(row map[string]string) error {
-		stopID := row["stop_id"]
-		if _, ok := stops[stopID]; !ok {
-			return nil
-		}
-		parentStation := row["parent_station"]
-		if parentStation != "" {
-			stations[parentStation] = struct{}{}
-		}
-		return nil
-	})
-	for stop := range stations {
-		stops[stop] = struct{}{}
-	}
-	return err
+func (t CollectTask) NeedsRun(server *Server) (bool, error) {
+	return true, nil
 }
 
-func collectTrips(a string, routes map[string]struct{}) (trips, services, shapes map[string]struct{}, _ error) {
-	trips = make(map[string]struct{})
-	services = make(map[string]struct{})
-	shapes = make(map[string]struct{})
-	return trips, services, shapes, iterCSV(a, "trips.txt", func(row map[string]string) error {
-		routeID := row["route_id"]
-		if _, ok := routes[routeID]; !ok {
-			return nil
-		}
-		tripID := row["trip_id"]
-		trips[tripID] = struct{}{}
-		serviceID := row["service_id"]
-		services[serviceID] = struct{}{}
-		shapeID := row["shape_id"]
-		if shapeID != "" {
-			shapes[shapeID] = struct{}{}
-		}
-		return nil
-	})
+func (t CollectTask) Execute(server *Server, progress func(float64)) error {
+	return t.execute(server, progress)
 }
 
-func collectStopTimes(a string, trips map[string]struct{}) (stops map[string]struct{}, _ error) {
-	stops = make(map[string]struct{})
-	return stops, iterCSV(a, "stop_times.txt", func(row map[string]string) error {
-		tripID := row["trip_id"]
-		if _, ok := trips[tripID]; !ok {
+func (t CollectTask) Cleanup(*Server) error { return nil }
+
+func (t CollectTask) Group() string { return "" }
+
+func (t CollectTask) Dependencies() []string {
+	return append([]string{"feed_ref", "archive"}, t.deps...)
+}
+
+var collectRoutesTask = CollectTask{
+	execute: func(server *Server, progress func(float64)) error {
+		server.routes = make(map[string]struct{})
+		return server.iterCSV(progress, "routes.txt", func(row map[string]string) error {
+			agencyID := row["agency_id"]
+			if _, ok := server.agencies[agencyID]; !ok {
+				return nil
+			}
+			routeID := row["route_id"]
+			server.routes[routeID] = struct{}{}
 			return nil
+		})
+	},
+}
+
+var collectStopsTask = CollectTask{
+	deps: []string{"collect_trips", "collect_stop_times"},
+	execute: func(server *Server, progress func(float64)) error {
+		stations := make(map[string]struct{})
+		err := server.iterCSV(progress, "stops.txt", func(row map[string]string) error {
+			stopID := row["stop_id"]
+			if _, ok := server.stops[stopID]; !ok {
+				return nil
+			}
+			parentStation := row["parent_station"]
+			if parentStation != "" {
+				server.stops[stopID] = [2]string{parentStation, row["platform_code"]}
+				stations[parentStation] = struct{}{}
+			}
+			return nil
+		})
+		for stop := range stations {
+			server.stops[stop] = [2]string{}
 		}
-		stopID := row["stop_id"]
-		stops[stopID] = struct{}{}
-		return nil
-	})
+		server.stopsCollected = true
+		return err
+	},
+}
+
+var collectTripsTask = CollectTask{
+	deps: []string{"collect_routes"},
+	execute: func(server *Server, progress func(float64)) error {
+		server.trips = make(map[string]struct{})
+		server.services = make(map[string]struct{})
+		server.shapes = make(map[string]struct{})
+		return server.iterCSV(progress, "trips.txt", func(row map[string]string) error {
+			routeID := row["route_id"]
+			if _, ok := server.routes[routeID]; !ok {
+				return nil
+			}
+			tripID := row["trip_id"]
+			server.trips[tripID] = struct{}{}
+			serviceID := row["service_id"]
+			server.services[serviceID] = struct{}{}
+			shapeID := row["shape_id"]
+			if shapeID != "" {
+				server.shapes[shapeID] = struct{}{}
+			}
+			return nil
+		})
+	},
+}
+
+var collectStopTimesTask = CollectTask{
+	deps: []string{"collect_trips"},
+	execute: func(server *Server, progress func(float64)) error {
+		server.stops = make(map[string][2]string)
+		return server.iterCSV(progress, "stop_times.txt", func(row map[string]string) error {
+			tripID := row["trip_id"]
+			if _, ok := server.trips[tripID]; !ok {
+				return nil
+			}
+			stopID := row["stop_id"]
+			server.stops[stopID] = [2]string{}
+			return nil
+		})
+	},
 }

@@ -81,9 +81,6 @@ CREATE TABLE IF NOT EXISTS kv6_current_trip (
 	)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS kv6_current_trip_key_idx
-ON kv6_current_trip (operating_day, realtime_trip_id);
-
 CREATE TABLE IF NOT EXISTS kv6_current_vehicle (
 	operating_day DATE NOT NULL,
 	data_owner_code TEXT NOT NULL,
@@ -209,34 +206,4 @@ CREATE TABLE IF NOT EXISTS kv6_projection_offsets (
 	updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- OR REPLACE -> IF NOT EXISTS
-CREATE OR REPLACE VIEW trip_stop_detail AS
-SELECT
-	st.feed_ref,
-	st.trip_id,
-	st.stop_sequence,
-	st.stop_id,
-	s.stop_code,
-	s.stop_name,
-	s.platform_code,
-	st.arrival_time,
-	st.departure_time,
-
-	t.realtime_trip_id AS realtime_trip_id,
-
-	k.status AS realtime_status,
-	k.event_timestamp,
-	k.vehicle_number,
-	k.block_code,
-	k.punctuality
-FROM gtfs_stop_times st
-JOIN gtfs_stops s
-	ON s.feed_ref = st.feed_ref
-   AND s.stop_id = st.stop_id
-JOIN gtfs_trips t
-	ON t.feed_ref = st.feed_ref
-   AND t.trip_id = st.trip_id
-LEFT JOIN kv6_trip_stop_status k
-	ON k.realtime_trip_id = t.realtime_trip_id
-   AND k.user_stop_code = s.stop_code;
 

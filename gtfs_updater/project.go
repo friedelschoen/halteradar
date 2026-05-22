@@ -17,43 +17,53 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 package main
 
-import (
-	"database/sql"
-	"log"
-)
-
-var postImporters = []func(tx *sql.Tx, feedRef int64) error{
-	analyzeTables,
-	generateMissingShapes,
-	generateRealtimeSequence,
-	calculateTripBounds,
-	calculateStopEvents,
+type ProjectorTask struct {
+	tableName string
+	query     string
+	deps      []string
 }
 
-func analyzeTables(tx *sql.Tx, feedRef int64) error {
-	log.Println("Analyze Tables...")
-	if _, err := tx.Exec(`ANALYZE;`); err != nil {
-		return err
+func (t ProjectorTask) NeedsRun(server *Server) (bool, error) {
+	if t.tableName == "" {
+		return true, nil
 	}
+	query := "SELECT EXISTS(SELECT 1 FROM " + t.tableName + " WHERE feed_ref = $1)"
 
-	return nil
+	var exists bool
+	err := server.db.QueryRow(query, server.feedRef).Scan(&exists)
+	if err != nil {
+		return true, err
+	}
+	return !exists, nil
 }
 
-func calculateTripBounds(tx *sql.Tx, feedRef int64) error {
-	if _, err := tx.Exec(`SET LOCAL work_mem = '16MB'`); err != nil {
-		return err
-	}
+func (t ProjectorTask) Group() string {
+	return t.tableName
+}
 
-	log.Println("Clearing trip_bounds...")
-	if _, err := tx.Exec(`
+func (t ProjectorTask) Execute(server *Server, progress func(float64)) error {
+	_, err := server.db.Exec(t.query, server.feedRef)
+	return err
+}
+
+func (t ProjectorTask) Cleanup(*Server) error { return nil }
+
+func (t ProjectorTask) Dependencies() []string {
+	return append([]string{"feed_ref"}, t.deps...)
+}
+
+var clearTripBounds = ProjectorTask{
+	tableName: "gtfs_trip_bounds",
+	query: `
 	DELETE FROM gtfs_trip_bounds
 	WHERE feed_ref = $1;
-	`, feedRef); err != nil {
-		return err
-	}
+	`,
+}
 
-	log.Println("Filling trip_bounds...")
-	if _, err := tx.Exec(`
+var calculateTripBounds = ProjectorTask{
+	tableName: "gtfs_trip_bounds",
+	deps:      []string{"clear_trip_bounds", "import_stop_times"},
+	query: `
 WITH bounds AS (
 	SELECT
 		feed_ref,
@@ -91,28 +101,21 @@ JOIN gtfs_stop_times start_st
 JOIN gtfs_stop_times end_st
 	ON end_st.feed_ref = b.feed_ref
    AND end_st.trip_id = b.trip_id
-   AND end_st.stop_sequence = b.end_sequence;`, feedRef); err != nil {
-		return err
-	}
-
-	return nil
+   AND end_st.stop_sequence = b.end_sequence;`,
 }
 
-func calculateStopEvents(tx *sql.Tx, feedRef int64) error {
-	if _, err := tx.Exec(`SET LOCAL work_mem = '16MB'`); err != nil {
-		return err
-	}
-
-	log.Println("Clearing stop_events...")
-	if _, err := tx.Exec(`
+var clearStopEvents = ProjectorTask{
+	tableName: "gtfs_stop_events",
+	query: `
 	DELETE FROM gtfs_stop_events
 	WHERE feed_ref = $1;
-	`, feedRef); err != nil {
-		return err
-	}
+	`,
+}
 
-	log.Println("Filling stop_events (departure)...")
-	if _, err := tx.Exec(`
+var calculateStopEventsDeparture = ProjectorTask{
+	tableName: "gtfs_stop_events",
+	deps:      []string{"clear_stop_events", "import_stop_times", "import_trips", "import_routes", "import_agencies", "calc_trip_bounds"},
+	query: `
 INSERT INTO gtfs_stop_events (
 	feed_ref,
 	mode,
@@ -168,7 +171,7 @@ SELECT
 	s.stop_id,
 	s.stop_code,
 	s.stop_name,
-	s.platform_code,
+	st.platform_code,
 
 	st.stop_headsign,
 	t.trip_headsign,
@@ -203,12 +206,13 @@ JOIN gtfs_trip_bounds tb
 	ON tb.feed_ref = st.feed_ref
    AND tb.trip_id = st.trip_id
 WHERE st.feed_ref = $1
-  AND st.departure_time IS NOT NULL;`, feedRef); err != nil {
-		return err
-	}
+  AND st.departure_time IS NOT NULL;`,
+}
 
-	log.Println("Filling stop_events (arrival)...")
-	if _, err := tx.Exec(`
+var calculateStopEventsArrival = ProjectorTask{
+	tableName: "gtfs_stop_events",
+	deps:      []string{"clear_stop_events", "import_stop_times", "import_trips", "import_routes", "import_agencies", "calc_trip_bounds"},
+	query: `
 INSERT INTO gtfs_stop_events (
 	feed_ref,
 	mode,
@@ -264,7 +268,7 @@ SELECT
 	s.stop_id,
 	s.stop_code,
 	s.stop_name,
-	s.platform_code,
+	st.platform_code,
 
 	st.stop_headsign,
 	t.trip_headsign,
@@ -299,16 +303,13 @@ JOIN gtfs_trip_bounds tb
 	ON tb.feed_ref = st.feed_ref
    AND tb.trip_id = st.trip_id
 WHERE st.feed_ref = $1
-  AND st.arrival_time IS NOT NULL;`, feedRef); err != nil {
-		return err
-	}
-
-	return nil
+  AND st.arrival_time IS NOT NULL;`,
 }
 
-func generateRealtimeSequence(tx *sql.Tx, feedRef int64) error {
-	log.Println("Generate realtime_trip_sequence...")
-	if _, err := tx.Exec(`
+var calculateRTTSequence = ProjectorTask{
+	tableName: "gtfs_trips",
+	deps:      []string{"import_trips"},
+	query: `
 WITH seq AS (
 	SELECT
 		feed_ref,
@@ -326,16 +327,13 @@ SET realtime_trip_sequence = seq.n
 FROM seq
 WHERE t.feed_ref = seq.feed_ref
   AND t.trip_id = seq.trip_id;
- `, feedRef); err != nil {
-		return err
-	}
-
-	return nil
+ `,
 }
 
-func generateMissingShapes(tx *sql.Tx, feedRef int64) error {
-	log.Println("Generate missing trip shapes...")
-	_, err := tx.Exec(`
+var calculateShapes = ProjectorTask{
+	tableName: "gtfs_shapes",
+	deps:      []string{"import_trips", "import_stops"},
+	query: `
 WITH missing AS (
 	SELECT
 		t.feed_ref,
@@ -381,16 +379,5 @@ SET shape_id = m.shape_id
 FROM missing m
 WHERE t.feed_ref = m.feed_ref
   AND t.trip_id = m.trip_id
-`, feedRef)
-
-	return err
-}
-
-func runPostImporters(tx *sql.Tx, feedRef int64) error {
-	for _, fn := range postImporters {
-		if err := fn(tx, feedRef); err != nil {
-			return err
-		}
-	}
-	return nil
+`,
 }

@@ -19,31 +19,47 @@ package main
 
 import (
 	"archive/zip"
-	"bytes"
 	"database/sql"
 	"encoding/csv"
-	"fmt"
+	"errors"
+	"flag"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/friedelschoen/departures/gtfs_updater/task"
 	_ "github.com/lib/pq"
 )
 
 const staleAfter = 12 * time.Hour
 
-var agencies = map[string]struct{}{
-	"QBUZZ": {},
+type Server struct {
+	archivePath string
+
+	db      *sql.DB
+	feedRef int64
+
+	tmpdir string
+
+	agencies,
+	routes,
+	trips,
+	services,
+	shapes map[string]struct{}
+	stops map[string][2]string
+
+	stopsCollected bool
 }
 
-func activeFeedIsStale(db *sql.DB) (bool, error) {
+func (server *Server) activeFeedIsStale() (bool, error) {
 	var importedAt time.Time
 
-	err := db.QueryRow(`
+	err := server.db.QueryRow(`
 		SELECT imported_at
 		FROM gtfs_feeds
 		WHERE active = true
@@ -60,32 +76,11 @@ func activeFeedIsStale(db *sql.DB) (bool, error) {
 	return time.Since(importedAt) >= staleAfter, nil
 }
 
-func download(url string) ([]byte, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("User-Agent", "DepartureBot/0.1")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s: %s", url, resp.Status)
-	}
-
-	return io.ReadAll(resp.Body)
-}
-
-func insertFeed(tx *sql.Tx, row map[string]string) (int64, bool, error) {
+func (server *Server) insertFeed(row map[string]string) (int64, bool, error) {
 	var id int64
 	var inserted bool
 
-	err := tx.QueryRow(`
+	err := server.db.QueryRow(`
 		INSERT INTO gtfs_feeds (
 			feed_publisher_name,
 			feed_id,
@@ -113,20 +108,6 @@ func insertFeed(tx *sql.Tx, row map[string]string) (int64, bool, error) {
 	return id, inserted, err
 }
 
-func activateFeed(tx *sql.Tx, feedRef int64) error {
-	if _, err := tx.Exec(`UPDATE gtfs_feeds SET active = false`); err != nil {
-		return err
-	}
-
-	_, err := tx.Exec(`
-		UPDATE gtfs_feeds
-		SET active = true, imported_at = now()
-		WHERE id = $1
-	`, feedRef)
-
-	return err
-}
-
 func readFirstRow(rc io.Reader) (map[string]string, error) {
 	r := csv.NewReader(rc)
 	r.FieldsPerRecord = -1
@@ -150,9 +131,8 @@ func readFirstRow(rc io.Reader) (map[string]string, error) {
 	return result, nil
 }
 
-func iterCSV(tmpdir string, filename string, fn func(map[string]string) error) error {
-	log.Println("open ", filename)
-	rc, err := os.Open(filepath.Join(tmpdir, filename))
+func (s *Server) iterCSV(progress func(float64), filename string, fn func(map[string]string) error) error {
+	rc, err := os.Open(filepath.Join(s.tmpdir, filename))
 	if err != nil {
 		return err
 	}
@@ -173,7 +153,6 @@ func iterCSV(tmpdir string, filename string, fn func(map[string]string) error) e
 
 	var total int
 
-	var prevOff int64
 	row := make(map[string]string, len(header))
 	for {
 		rec, err := r.Read()
@@ -186,11 +165,7 @@ func iterCSV(tmpdir string, filename string, fn func(map[string]string) error) e
 		total++
 
 		off := r.InputOffset()
-		if off-prevOff > 1000000 {
-			log.Printf("%s - %5.1f%% - %dMB / %dMB\n", filename, 100*float64(off)/float64(totalSize), off/1000000, totalSize/1000000)
-
-			prevOff = off
-		}
+		progress(float64(off) / float64(totalSize))
 
 		for k := range row {
 			row[k] = ""
@@ -205,16 +180,27 @@ func iterCSV(tmpdir string, filename string, fn func(map[string]string) error) e
 			return err
 		}
 	}
-	log.Printf("done %s - %dMB\n", filename, totalSize/1000000)
 	return err
 }
 
-func insertCSV(stmt *sql.Stmt, tmpdir string, filename string, fn func(map[string]string) []any, cleanup func() [][]any) error {
+func (s *Server) insertCSV(progress func(float64), filename string, query string, fn func(*Server, map[string]string) []any) error {
 	var total, skipped int
 
-	err := iterCSV(tmpdir, filename, func(row map[string]string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	err = s.iterCSV(progress, filename, func(row map[string]string) error {
 		total++
-		insert := fn(row)
+		insert := fn(s, row)
 		if len(insert) == 0 {
 			skipped++
 			return nil
@@ -222,16 +208,17 @@ func insertCSV(stmt *sql.Stmt, tmpdir string, filename string, fn func(map[strin
 		_, err := stmt.Exec(insert...)
 		return err
 	})
-	if cleanup != nil {
-		for _, insert := range cleanup() {
-			if _, err := stmt.Exec(insert...); err != nil {
-				return err
-			}
-		}
+	if err != nil {
+		return err
 	}
+
+	progress(-1)
 	_, err = stmt.Exec()
-	log.Printf("%d of %d skipped (%.1f%%)\n", skipped, total, 100*float64(skipped)/float64(total))
-	return err
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 func parseGTFSDate(s string) any {
@@ -304,179 +291,206 @@ func unpackFile(dest string, f *zip.File) error {
 	}
 	defer outstream.Close()
 
-	n, err := io.Copy(outstream, instream)
-	if err != nil {
-		return err
+	_, err = io.Copy(outstream, instream)
+	return err
+}
+
+type MetaTask []string
+
+func (t MetaTask) NeedsRun(server *Server) (bool, error)                { return true, nil }
+func (t MetaTask) Group() string                                        { return "" }
+func (t MetaTask) Execute(server *Server, progress func(float64)) error { return nil }
+func (t MetaTask) Cleanup(*Server) error                                { return nil }
+func (t MetaTask) Dependencies() []string                               { return t }
+
+type Task struct {
+	needsRun func(*Server) (bool, error)
+	execute  func(server *Server, progress func(float64)) error
+	cleanup  func(*Server) error
+
+	deps  []string
+	group string
+}
+
+func (t Task) NeedsRun(server *Server) (bool, error) {
+	if t.needsRun != nil {
+		return t.needsRun(server)
 	}
-	log.Printf("unpacked %s - %d bytes copied\n", f.Name, n)
+	return true, nil
+}
+
+func (t Task) Execute(server *Server, progress func(float64)) error {
+	return t.execute(server, progress)
+}
+
+func (t Task) Cleanup(server *Server) error {
+	if t.cleanup != nil {
+		return t.cleanup(server)
+	}
 	return nil
 }
 
-func unpack(dest string, buf []byte) error {
-	zr, err := zip.NewReader(bytes.NewReader(buf), int64(len(buf)))
-	if err != nil {
-		return err
-	}
+func (t Task) Dependencies() []string {
+	return t.deps
+}
 
-	for _, f := range zr.File {
-		if err := unpackFile(dest, f); err != nil {
+func (t Task) Group() string {
+	return t.group
+}
+
+var tasks = map[string]task.Task[*Server]{
+	"feed_ref": Task{
+		deps: []string{"archive"},
+		needsRun: func(s *Server) (bool, error) {
+			if s.feedRef > 0 {
+				return false, nil
+			}
+			needsUpdate, err := s.activeFeedIsStale()
+			if err != nil {
+				return false, err
+			}
+			return needsUpdate, nil
+		},
+		execute: func(server *Server, progress func(float64)) error {
+			file, err := os.Open(filepath.Join(server.tmpdir, "feed_info.txt"))
+			if err != nil {
+				return err
+			}
+			feedInfo, err := readFirstRow(file)
+			if err != nil {
+				return err
+			}
+			file.Close()
+
+			feedRef, _, err := server.insertFeed(feedInfo)
+			if err != nil {
+				return err
+			}
+			server.feedRef = feedRef
+			return nil
+		},
+	},
+	"tmpdir": Task{
+		execute: func(server *Server, progress func(float64)) error {
+			server.tmpdir = filepath.Join(os.TempDir(), "gtfs_updater")
+			err := os.Mkdir(server.tmpdir, 0775)
+			if errors.Is(err, os.ErrExist) {
+				return nil
+			}
 			return err
-		}
-	}
-	return nil
-}
+		},
+		cleanup: func(s *Server) error {
+			return os.RemoveAll(s.tmpdir)
+		},
+	},
+	"archive": Task{
+		deps: []string{"tmpdir"},
+		execute: func(server *Server, progress func(float64)) error {
+			buf, err := os.Open(server.archivePath)
+			if err != nil {
+				return err
+			}
+			defer buf.Close()
 
-func importTables(tx *sql.Tx, feedRef int64, zr string) error {
-	log.Printf("collecting...\n")
+			size, err := buf.Seek(0, io.SeekEnd)
+			if err != nil {
+				return err
+			}
 
-	routes, err := collectRoutes(zr, agencies)
-	if err != nil {
-		return err
-	}
+			zr, err := zip.NewReader(buf, size)
+			if err != nil {
+				return err
+			}
 
-	trips, services, shapes, err := collectTrips(zr, routes)
-	if err != nil {
-		return err
-	}
+			for i, f := range zr.File {
+				progress(float64(i) / float64(len(zr.File)))
+				if err := unpackFile(server.tmpdir, f); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
+	"activate": Task{
+		deps: []string{"feed_ref"},
+		execute: func(server *Server, progress func(float64)) error {
+			tx, err := server.db.Begin()
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback()
+			if _, err := tx.Exec(`UPDATE gtfs_feeds SET active = false`); err != nil {
+				return err
+			}
+			_, err = tx.Exec(`
+		UPDATE gtfs_feeds
+		SET active = true, imported_at = now()
+		WHERE id = $1
+	`, server.feedRef)
 
-	stops, err := collectStopTimes(zr, trips)
-	if err != nil {
-		return err
-	}
+			return tx.Commit()
+		},
+	},
 
-	err = collectStops(zr, stops)
-	if err != nil {
-		return err
-	}
+	"collect_routes":     collectRoutesTask,
+	"collect_trips":      collectTripsTask,
+	"collect_stop_times": collectStopTimesTask,
+	"collect_stops":      collectStopsTask,
+	"collect_all":        MetaTask{"collect_routes", "collect_trips", "collect_stop_times", "collect_stops"},
 
-	log.Printf("importing new feed_ref=%d...\n", feedRef)
+	"import_agencies":       importAgenciesTask,
+	"import_routes":         importRoutesTask,
+	"import_trips":          importTripsTask,
+	"import_calendar_dates": importCalendarDatesTask,
+	"import_stops":          importStopsTask,
+	"import_stop_times":     importStopTimesTask,
+	"import_shapes":         importShapesTask,
+	"import_all": MetaTask{
+		"import_agencies",
+		"import_routes",
+		"import_trips",
+		"import_calendar_dates",
+		"import_stops",
+		"import_stop_times",
+		"import_shapes",
+	},
 
-	err = importAgency(tx, feedRef, zr, agencies)
-	if err != nil {
-		return err
-	}
-	err = importRoutes(tx, feedRef, zr, routes)
-	if err != nil {
-		return err
-	}
-	err = importTrips(tx, feedRef, zr, routes)
-	if err != nil {
-		return err
-	}
-	err = importCalendarDates(tx, feedRef, zr, services)
-	if err != nil {
-		return err
-	}
-	err = importStops(tx, feedRef, zr, stops)
-	if err != nil {
-		return err
-	}
-	err = importStopTimes(tx, feedRef, zr, trips)
-	if err != nil {
-		return err
-	}
-	err = importShapes(tx, feedRef, zr, shapes)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func importData(db *sql.DB, gtfsURL string) (int64, error) {
-	needsUpdate, err := activeFeedIsStale(db)
-	if err != nil {
-		return 0, err
-	}
-	if !needsUpdate {
-		return 0, os.ErrExist
-	}
-
-	log.Println("downloading GTFS:", gtfsURL)
-
-	buf, err := download(gtfsURL)
-	if err != nil {
-		return 0, err
-	}
-
-	zr, err := os.MkdirTemp("", "gtfs_updater")
-	if err != nil {
-		return 0, err
-	}
-	defer os.RemoveAll(zr)
-
-	if err := unpack(zr, buf); err != nil {
-		return 0, err
-	}
-
-	file, err := os.Open(filepath.Join(zr, "feed_info.txt"))
-	if err != nil {
-		return 0, err
-	}
-	feedInfo, err := readFirstRow(file)
-	if err != nil {
-		return 0, err
-	}
-	file.Close()
-
-	tx, err := db.Begin()
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
-
-	feedRef, imported, err := insertFeed(tx, feedInfo)
-	if err != nil {
-		return 0, err
-	}
-
-	if !imported {
-		log.Printf("feed already exists; activating feed_ref=%d\n", feedRef)
-		if err := activateFeed(tx, feedRef); err != nil {
-			return 0, err
-		}
-		if err := tx.Commit(); err != nil {
-			return 0, err
-		}
-		return 0, os.ErrExist
-	}
-
-	if err := importTables(tx, feedRef, zr); err != nil {
-		return 0, err
-	}
-
-	log.Println("Import done! Finishing...")
-
-	// insert done!
-
-	err = runPostImporters(tx, feedRef)
-	if err != nil {
-		return 0, err
-	}
-
-	if err := activateFeed(tx, feedRef); err != nil {
-		return 0, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-
-	return feedRef, nil
+	"clear_trip_bounds":   clearTripBounds,
+	"clear_stop_events":   clearStopEvents,
+	"calc_trip_bounds":    calculateTripBounds,
+	"calc_se_departure":   calculateStopEventsDeparture,
+	"calc_se_arrival":     calculateStopEventsArrival,
+	"calc_rtt_sequence":   calculateRTTSequence,
+	"calc_missing_shapes": calculateShapes,
+	"calc_all": MetaTask{
+		"calc_trip_bounds",
+		"calc_se_departure",
+		"calc_se_arrival",
+		"calc_rtt_sequence",
+		"calc_missing_shapes",
+	},
 }
 
 func main() {
-	dburl := os.Getenv("POSTGRES")
-	if dburl == "" {
-		log.Fatal("missing POSTGRES env")
+	var (
+		dbpath   = flag.String("db", os.Getenv("POSTGRES"), "path to postgres")
+		archive  = flag.String("archive", "", "Path to GTFS archive")
+		feedRef  = flag.Int64("feedref", 0, "Feed Ref")
+		agencies = flag.String("agencies", "QBUZZ", "path to postgres, comma-delimited")
+		workers  = flag.Int("jobs", runtime.NumCPU(), "parallel workers")
+	)
+
+	flag.Parse()
+
+	if *dbpath == "" {
+		log.Fatal("missing $POSTGRES env")
 	}
 
-	gtfsURL := os.Getenv("GTFS_URL")
-	if gtfsURL == "" {
-		log.Fatal("missing GTFS_URL env")
+	if *archive == "" && *feedRef == 0 {
+		log.Fatal("either -archive or -feedref")
 	}
 
-	db, err := sql.Open("postgres", dburl)
+	db, err := sql.Open("postgres", *dbpath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -486,17 +500,31 @@ func main() {
 		log.Fatal(err)
 	}
 
-	for {
-		feedRef, err := importData(db, gtfsURL)
-		if err == os.ErrExist {
-			log.Printf("GTFS import already exist\n")
-			time.Sleep(12 * time.Hour)
-		} else if err != nil {
-			log.Printf("GTFS import failed: %v\n", err)
-			time.Sleep(10 * time.Minute)
-		} else {
-			log.Printf("GTFS import complete; active feed_ref=%d\n", feedRef)
-			time.Sleep(12 * time.Hour)
+	var s Server
+	s.db = db
+	s.archivePath = *archive
+	s.feedRef = *feedRef
+	s.agencies = map[string]struct{}{}
+
+	for a := range strings.SplitSeq(*agencies, ",") {
+		if a == "" {
+			continue
 		}
+
+		s.agencies[a] = struct{}{}
+	}
+
+	var g task.TaskGraph[*Server]
+	if err := g.Add(tasks, flag.Args()...); err != nil {
+		log.Fatalln(err)
+	}
+
+	var r task.TaskRunner[*Server]
+	r.G = g
+	r.State = &s
+	r.Workers = *workers
+
+	if err := r.Execute(); err != nil {
+		log.Fatalln(err)
 	}
 }
