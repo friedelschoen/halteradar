@@ -32,7 +32,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/friedelschoen/departures/gtfs_updater/task"
+	"github.com/friedelschoen/departures/gtfs_import/task"
 	_ "github.com/lib/pq"
 )
 

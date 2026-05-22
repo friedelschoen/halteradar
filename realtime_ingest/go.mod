@@ -1,4 +1,4 @@
-module github.com/friedelschoen/departures/kv6_ingest
+module github.com/friedelschoen/departures/realtime_ingest
 
 go 1.26.1
 

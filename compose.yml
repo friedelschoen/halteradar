@@ -33,8 +33,8 @@ services:
     volumes:
       - ./static/gtfs-nl.zip:/usr/share/nginx/html/gtfs-nl.zip
 
-  kv6_ingest:
-    build: kv6_ingest
+  realtime_ingest:
+    build: realtime_ingest
     restart: unless-stopped
 
     depends_on:
