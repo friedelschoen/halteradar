@@ -156,7 +156,6 @@ CREATE TABLE IF NOT EXISTS kv6_vehicle_trip_history (
 	realtime_trip_id TEXT NOT NULL,
 
 	line_planning_number TEXT NOT NULL,
-    trip_id TEXT NOT NULL, 
 	trip_short_name INTEGER NOT NULL,
 	reinforcement_number INTEGER NOT NULL DEFAULT 0,
 
