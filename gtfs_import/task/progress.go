@@ -22,6 +22,7 @@ type ProgressHandler struct {
 	bars    []string
 	status  map[string]*ProgressStatus
 	signal  chan struct{}
+	done    []string
 	mu      sync.Mutex
 }
 
@@ -29,10 +30,22 @@ func (h *ProgressHandler) Done(name string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	h.bars = slices.DeleteFunc(h.bars, func(n string) bool {
+	delete(h.status, name)
+	newBars := slices.DeleteFunc(h.bars, func(n string) bool {
 		return n == name
 	})
-	delete(h.status, name)
+	if len(newBars) != len(h.bars) {
+		h.done = append(h.done, name)
+		h.update()
+	}
+	h.bars = newBars
+}
+
+func (h *ProgressHandler) update() {
+	select {
+	case h.signal <- struct{}{}:
+	default:
+	}
 }
 
 func (h *ProgressHandler) SetProgress(name string, progress float64) {
@@ -63,10 +76,7 @@ func (h *ProgressHandler) SetProgress(name string, progress float64) {
 
 	status.progress = progress
 
-	select {
-	case h.signal <- struct{}{}:
-	default:
-	}
+	h.update()
 }
 
 func winWidth() int {
@@ -107,6 +117,11 @@ func (h *ProgressHandler) print() {
 	defer h.mu.Unlock()
 
 	h.cleanRows()
+
+	for i := len(h.done) - 1; i >= 0; i-- {
+		fmt.Printf("\r\033[0K%s\n", h.done[i])
+	}
+	h.done = nil
 
 	cols := winWidth() - 20 - 5 - 5 - 1
 	for _, name := range h.bars {
