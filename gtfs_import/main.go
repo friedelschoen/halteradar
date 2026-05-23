@@ -342,14 +342,15 @@ var tasks = map[string]task.Task[*Server]{
 	"feed_ref": Task{
 		deps: []string{"archive"},
 		needsRun: func(s *Server) (bool, error) {
-			if s.feedRef > 0 {
-				return false, nil
-			}
-			needsUpdate, err := s.activeFeedIsStale()
-			if err != nil {
-				return false, err
-			}
-			return needsUpdate, nil
+			return s.feedRef == 0, nil
+			// {
+			// 	return false, nil
+			// }
+			// needsUpdate, err := s.activeFeedIsStale()
+			// if err != nil {
+			// 	return false, err
+			// }
+			// return needsUpdate, nil
 		},
 		execute: func(server *Server, progress func(float64)) error {
 			file, err := os.Open(filepath.Join(server.tmpdir, "feed_info.txt"))
@@ -478,6 +479,7 @@ func main() {
 		feedRef  = flag.Int64("feedref", 0, "Feed Ref")
 		agencies = flag.String("agencies", "QBUZZ", "path to postgres, comma-delimited")
 		workers  = flag.Int("jobs", runtime.NumCPU(), "parallel workers")
+		force    = flag.Bool("force", false, "run all tasks")
 	)
 
 	flag.Parse()
@@ -523,6 +525,7 @@ func main() {
 	r.G = g
 	r.State = &s
 	r.Workers = *workers
+	r.RunAll = *force
 
 	if err := r.Execute(); err != nil {
 		log.Fatalln(err)

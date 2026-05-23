@@ -13,6 +13,7 @@ import (
 
 type ProgressStatus struct {
 	progress   float64
+	started    time.Time
 	unsurePos  float64
 	unsureLast time.Time
 }
@@ -30,15 +31,16 @@ func (h *ProgressHandler) Done(name string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	delete(h.status, name)
 	newBars := slices.DeleteFunc(h.bars, func(n string) bool {
 		return n == name
 	})
 	if len(newBars) != len(h.bars) {
-		h.done = append(h.done, name)
+		status := h.status[name]
+		h.done = append(h.done, fmt.Sprintf("%s (%s)", name, fmtDuration(time.Since(status.started))))
 		h.update()
 	}
 	h.bars = newBars
+	delete(h.status, name)
 }
 
 func (h *ProgressHandler) update() {
@@ -65,6 +67,7 @@ func (h *ProgressHandler) SetProgress(name string, progress float64) {
 		status = &ProgressStatus{
 			progress:   progress,
 			unsureLast: time.Now(),
+			started:    time.Now(),
 		}
 		h.status[name] = status
 	}
@@ -112,6 +115,16 @@ func (h *ProgressHandler) cleanRows() {
 	h.prevLen = len(h.bars)
 }
 
+func fmtDuration(dur time.Duration) string {
+	if dur.Seconds() < 60 {
+		return fmt.Sprintf("%.1fs", dur.Seconds())
+	} else {
+		min := dur.Minutes()
+		sec := min / 60
+		return fmt.Sprintf("%.0f:%02.0fmin", min, sec)
+	}
+}
+
 func (h *ProgressHandler) print() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -123,10 +136,16 @@ func (h *ProgressHandler) print() {
 	}
 	h.done = nil
 
-	cols := winWidth() - 20 - 5 - 5 - 1
 	for _, name := range h.bars {
-		var barContent string
 		status := h.status[name]
+		now := time.Now()
+		var percent string
+		durstr := fmtDuration(now.Sub(status.started))
+		if status.progress >= 0 {
+			percent = fmt.Sprintf(" %5.1f%%", status.progress*100)
+		}
+		cols := winWidth() - max(len(name), 20) - len(percent) - len(durstr) - 5 - 1
+		var barContent string
 		if status.progress >= 0 {
 			numCols := int(float64(cols) * status.progress)
 
@@ -134,7 +153,6 @@ func (h *ProgressHandler) print() {
 			fillTodo := strings.Repeat(" ", cols-numCols)
 			barContent = fillDone + fillTodo
 		} else {
-			now := time.Now()
 			delta := now.Sub(status.unsureLast).Seconds()
 			status.unsureLast = now
 
@@ -151,11 +169,7 @@ func (h *ProgressHandler) print() {
 					strings.Repeat(" ", cols-numCols-barCols)
 		}
 
-		if status.progress >= 0 {
-			fmt.Printf("\r\033[0K%-20s [%s] %5.1f%%\n", name, barContent, status.progress*100)
-		} else {
-			fmt.Printf("\r\033[0K%-20s [%s]  ???\n", name, barContent)
-		}
+		fmt.Printf("\r\033[0K%-20s [%s]%s | %s\n", name, barContent, percent, durstr)
 	}
 }
 

@@ -169,47 +169,25 @@ CREATE TYPE gtfs_stop_event_mode AS ENUM (
 CREATE UNLOGGED TABLE IF NOT EXISTS gtfs_stop_events (
 	feed_ref BIGINT NOT NULL REFERENCES gtfs_feeds(id) ON DELETE CASCADE,
 
-	mode gtfs_stop_event_mode NOT NULL,
-
+	mode gtfs_stop_event_mode NOT NULL,	
+    scheduled_time TIMESTAMPTZ NOT NULL,
 	service_id TEXT NOT NULL,
 	service_date DATE NOT NULL,
 
 	trip_id TEXT NOT NULL,
-    direction_id SMALLINT,
-	realtime_trip_id TEXT,
-	realtime_trip_sequence INTEGER,
-
-	route_id TEXT NOT NULL,
-	route_short_name TEXT,
-	route_color TEXT,
-	route_text_color TEXT,
-
+    route_id TEXT NOT NULL,
 	stop_sequence INTEGER NOT NULL,
 	stop_id TEXT NOT NULL,
     platform_code TEXT,
-	stop_code TEXT,
-	stop_name TEXT,
-
 	stop_headsign TEXT,
-	trip_headsign TEXT,
-
-	scheduled_time TIMESTAMPTZ NOT NULL,
-
-	terminal BOOLEAN NOT NULL,
-	first_stop BOOLEAN NOT NULL,
-	last_stop BOOLEAN NOT NULL,
 	event_type SMALLINT NOT NULL DEFAULT 0,
 	timepoint SMALLINT,
 	shape_dist_traveled DOUBLE PRECISION,
 	fare_units_traveled INTEGER,
 
-	PRIMARY KEY (
-		feed_ref,
-		mode,
-		service_date,
-		trip_id,
-		stop_sequence
-	),
+    terminal BOOLEAN NOT NULL,
+    first_stop BOOLEAN NOT NULL,
+    last_stop BOOLEAN NOT NULL,
 
 	FOREIGN KEY (feed_ref, trip_id)
 		REFERENCES gtfs_trips(feed_ref, trip_id)
@@ -219,9 +197,19 @@ CREATE UNLOGGED TABLE IF NOT EXISTS gtfs_stop_events (
 		REFERENCES gtfs_stops(feed_ref, stop_id)
 		ON DELETE CASCADE,
 
+	FOREIGN KEY (feed_ref, route_id)
+		REFERENCES gtfs_routes(feed_ref, route_id)
+		ON DELETE CASCADE,
+
 	FOREIGN KEY (feed_ref, trip_id, stop_sequence)
 		REFERENCES gtfs_stop_times(feed_ref, trip_id, stop_sequence)
 		ON DELETE CASCADE
+) WITH (
+	tsdb.hypertable,
+	tsdb.partition_column = 'scheduled_time',
+	tsdb.chunk_interval = '1 day',
+    tsdb.segmentby = 'feed_ref, mode, stop_id',
+    tsdb.orderby = 'scheduled_time DESC'
 );
 
 CREATE UNLOGGED TABLE IF NOT EXISTS gtfs_trip_bounds (

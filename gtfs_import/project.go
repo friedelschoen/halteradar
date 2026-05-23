@@ -20,6 +20,7 @@ package main
 type ProjectorTask struct {
 	tableName string
 	query     string
+	extraArgs []any
 	deps      []string
 }
 
@@ -42,7 +43,7 @@ func (t ProjectorTask) Group() string {
 }
 
 func (t ProjectorTask) Execute(server *Server, progress func(float64)) error {
-	_, err := server.db.Exec(t.query, server.feedRef)
+	_, err := server.db.Exec(t.query, append([]any{server.feedRef}, t.extraArgs...)...)
 	return err
 }
 
@@ -112,79 +113,50 @@ var clearStopEvents = ProjectorTask{
 	`,
 }
 
-var calculateStopEventsDeparture = ProjectorTask{
-	tableName: "gtfs_stop_events",
-	deps:      []string{"clear_stop_events", "import_stop_times", "import_trips", "import_routes", "import_agencies", "calc_trip_bounds"},
-	query: `
+var stopEventsSQL = `
 INSERT INTO gtfs_stop_events (
 	feed_ref,
 	mode,
+    scheduled_time,
 	service_id,
 	service_date,
 
 	trip_id,
-	direction_id,
-	realtime_trip_id,
-	realtime_trip_sequence,
+    route_id,
+    stop_sequence, 
+    stop_id,
+    platform_code,
+    stop_headsign,
+    event_type,
+    timepoint,
+    shape_dist_traveled,
+    fare_units_traveled,
 
-	route_id,
-	route_short_name,
-	route_color,
-	route_text_color,
-
-	stop_sequence,
-	stop_id,
-	stop_code,
-	stop_name,
-	platform_code,
-
-	stop_headsign,
-	trip_headsign,
-
-	scheduled_time,
-
-	terminal,
-	first_stop,
-	last_stop,
-	event_type,
-	timepoint,
-	shape_dist_traveled,
-	fare_units_traveled
+    terminal,
+    first_stop,
+    last_stop
 )
 SELECT
 	st.feed_ref,
-	'departure'::gtfs_stop_event_mode,
+	$2::gtfs_stop_event_mode,
+    ((cd.date::timestamp + CASE WHEN $2 = 'arrival' THEN st.arrival_time ELSE st.departure_time END) AT TIME ZONE a.agency_timezone),
 	t.service_id,
 	cd.date,
 
 	t.trip_id,
-	t.direction_id,
-	t.realtime_trip_id,
-	t.realtime_trip_sequence,
-
-	r.route_id,
-	r.route_short_name,
-	r.route_color,
-	r.route_text_color,
-
+    t.route_id,
 	st.stop_sequence,
-	s.stop_id,
-	s.stop_code,
-	s.stop_name,
-	st.platform_code,
-
-	st.stop_headsign,
-	t.trip_headsign,
-
-	((cd.date::timestamp + st.departure_time) AT TIME ZONE a.agency_timezone),
-
-	st.stop_sequence = tb.end_sequence,
- 	st.stop_sequence = tb.start_sequence,
-    st.stop_sequence = tb.end_sequence,
-	COALESCE(st.pickup_type, 0),
+	st.stop_id,
+    st.platform_code,
+    st.stop_headsign,
+    COALESCE((CASE WHEN $2 = 'arrival' THEN st.drop_off_type ELSE st.pickup_type END), 0),
 	st.timepoint,
 	st.shape_dist_traveled,
-	st.fare_units_traveled
+	st.fare_units_traveled,
+
+    st.stop_sequence = (CASE WHEN $2 = 'arrival' THEN tb.start_sequence ELSE tb.end_sequence END),
+	st.stop_sequence = tb.start_sequence,
+    st.stop_sequence = tb.end_sequence
 FROM gtfs_stop_times st
 JOIN gtfs_trips t
 	ON t.feed_ref = st.feed_ref
@@ -195,9 +167,6 @@ JOIN gtfs_routes r
 JOIN gtfs_agency a
 	ON a.feed_ref = r.feed_ref
    AND a.agency_id = r.agency_id
-JOIN gtfs_stops s
-	ON s.feed_ref = st.feed_ref
-   AND s.stop_id = st.stop_id
 JOIN gtfs_calendar_dates cd
 	ON cd.feed_ref = t.feed_ref
    AND cd.service_id = t.service_id
@@ -206,104 +175,21 @@ JOIN gtfs_trip_bounds tb
 	ON tb.feed_ref = st.feed_ref
    AND tb.trip_id = st.trip_id
 WHERE st.feed_ref = $1
-  AND st.departure_time IS NOT NULL;`,
+AND (CASE WHEN $2 = 'arrival' THEN st.arrival_time ELSE st.departure_time END) IS NOT NULL;
+`
+
+var calculateStopEventsDeparture = ProjectorTask{
+	tableName: "gtfs_stop_events",
+	deps:      []string{"clear_stop_events", "import_stop_times", "import_trips", "import_routes", "import_agencies", "calc_trip_bounds"},
+	query:     stopEventsSQL,
+	extraArgs: []any{"departure"},
 }
 
 var calculateStopEventsArrival = ProjectorTask{
 	tableName: "gtfs_stop_events",
 	deps:      []string{"clear_stop_events", "import_stop_times", "import_trips", "import_routes", "import_agencies", "calc_trip_bounds"},
-	query: `
-INSERT INTO gtfs_stop_events (
-	feed_ref,
-	mode,
-	service_id,
-	service_date,
-
-	trip_id,
-	direction_id,
-	realtime_trip_id,
-	realtime_trip_sequence,
-
-	route_id,
-	route_short_name,
-	route_color,
-	route_text_color,
-
-	stop_sequence,
-	stop_id,
-	stop_code,
-	stop_name,
-	platform_code,
-
-	stop_headsign,
-	trip_headsign,
-
-	scheduled_time,
-
-	terminal,
-	first_stop,
-	last_stop,
-	event_type,
-	timepoint,
-	shape_dist_traveled,
-	fare_units_traveled
-)
-SELECT
-	st.feed_ref,
-	'arrival'::gtfs_stop_event_mode,
-	t.service_id,
-	cd.date,
-
-	t.trip_id,
-	t.direction_id,
-	t.realtime_trip_id,
-	t.realtime_trip_sequence,
-
-	r.route_id,
-	r.route_short_name,
-	r.route_color,
-	r.route_text_color,
-
-	st.stop_sequence,
-	s.stop_id,
-	s.stop_code,
-	s.stop_name,
-	st.platform_code,
-
-	st.stop_headsign,
-	t.trip_headsign,
-
-	((cd.date::timestamp + st.arrival_time) AT TIME ZONE a.agency_timezone),
-
-	st.stop_sequence = tb.start_sequence,
- 	st.stop_sequence = tb.start_sequence,
-    st.stop_sequence = tb.end_sequence,
-	COALESCE(st.drop_off_type, 0),
-	st.timepoint,
-	st.shape_dist_traveled,
-	st.fare_units_traveled
-FROM gtfs_stop_times st
-JOIN gtfs_trips t
-	ON t.feed_ref = st.feed_ref
-   AND t.trip_id = st.trip_id
-JOIN gtfs_routes r
-	ON r.feed_ref = t.feed_ref
-   AND r.route_id = t.route_id
-JOIN gtfs_agency a
-	ON a.feed_ref = r.feed_ref
-   AND a.agency_id = r.agency_id
-JOIN gtfs_stops s
-	ON s.feed_ref = st.feed_ref
-   AND s.stop_id = st.stop_id
-JOIN gtfs_calendar_dates cd
-	ON cd.feed_ref = t.feed_ref
-   AND cd.service_id = t.service_id
-   AND cd.exception_type = 1
-JOIN gtfs_trip_bounds tb
-	ON tb.feed_ref = st.feed_ref
-   AND tb.trip_id = st.trip_id
-WHERE st.feed_ref = $1
-  AND st.arrival_time IS NOT NULL;`,
+	query:     stopEventsSQL,
+	extraArgs: []any{"arrival"},
 }
 
 var calculateRTTSequence = ProjectorTask{

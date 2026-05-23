@@ -2,6 +2,7 @@ package task
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 )
 
@@ -10,6 +11,7 @@ type TaskRunner[S any] struct {
 
 	State   S
 	Workers int
+	RunAll  bool
 
 	progress ProgressHandler
 	mu       sync.Mutex
@@ -196,11 +198,15 @@ func (r *TaskRunner[S]) Execute() error {
 				continue
 			}
 
-			needs, err := n.task.NeedsRun(r.State)
-			if err != nil {
-				r.setstate(n, nodefailed)
-				r.mu.Unlock()
-				return fmt.Errorf("%s: NeedsRun: %w", n.task, err)
+			needs := r.RunAll || slices.Contains(r.G.Targets, n)
+			if !needs {
+				var err error
+				needs, err = n.task.NeedsRun(r.State)
+				if err != nil {
+					r.setstate(n, nodefailed)
+					r.mu.Unlock()
+					return fmt.Errorf("%s: NeedsRun: %w", n.task, err)
+				}
 			}
 
 			if !needs {
