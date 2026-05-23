@@ -50,8 +50,8 @@ type Server struct {
 	routes,
 	trips,
 	services,
-	shapes map[string]struct{}
-	stops map[string][2]string
+	shapes,
+	stops map[string]struct{}
 
 	stopsCollected bool
 }
@@ -459,14 +459,12 @@ var tasks = map[string]task.Task[*Server]{
 	"clear_trip_bounds":   clearTripBounds,
 	"clear_stop_events":   clearStopEvents,
 	"calc_trip_bounds":    calculateTripBounds,
-	"calc_se_departure":   calculateStopEventsDeparture,
-	"calc_se_arrival":     calculateStopEventsArrival,
+	"calc_stop_events":    calculateStopEvents,
 	"calc_rtt_sequence":   calculateRTTSequence,
 	"calc_missing_shapes": calculateShapes,
 	"calc_all": MetaTask{
 		"calc_trip_bounds",
-		"calc_se_departure",
-		"calc_se_arrival",
+		"calc_stop_events",
 		"calc_rtt_sequence",
 		"calc_missing_shapes",
 	},

@@ -113,50 +113,58 @@ var clearStopEvents = ProjectorTask{
 	`,
 }
 
-var stopEventsSQL = `
+var calculateStopEvents = ProjectorTask{
+	tableName: "gtfs_stop_events",
+	deps: []string{
+		"clear_stop_events",
+		"import_stop_times",
+		"import_trips",
+		"import_routes",
+		"import_agencies",
+		"calc_trip_bounds",
+	},
+	query: `
 INSERT INTO gtfs_stop_events (
 	feed_ref,
 	mode,
-    scheduled_time,
+	scheduled_time,
 	service_id,
 	service_date,
 
 	trip_id,
-    route_id,
-    stop_sequence, 
-    stop_id,
-    platform_code,
-    stop_headsign,
-    event_type,
-    timepoint,
-    shape_dist_traveled,
-    fare_units_traveled,
+	route_id,
+	stop_sequence,
+	stop_id,
+	stop_headsign,
+	event_type,
+	timepoint,
+	shape_dist_traveled,
+	fare_units_traveled,
 
-    terminal,
-    first_stop,
-    last_stop
+	terminal,
+	first_stop,
+	last_stop
 )
 SELECT
 	st.feed_ref,
-	$2::gtfs_stop_event_mode,
-    ((cd.date::timestamp + CASE WHEN $2 = 'arrival' THEN st.arrival_time ELSE st.departure_time END) AT TIME ZONE a.agency_timezone),
+	ev.mode,
+	((cd.date::timestamp + ev.stop_time) AT TIME ZONE a.agency_timezone),
 	t.service_id,
 	cd.date,
 
 	t.trip_id,
-    t.route_id,
+	t.route_id,
 	st.stop_sequence,
 	st.stop_id,
-    st.platform_code,
-    st.stop_headsign,
-    COALESCE((CASE WHEN $2 = 'arrival' THEN st.drop_off_type ELSE st.pickup_type END), 0),
+	st.stop_headsign,
+	COALESCE(ev.event_type, 0),
 	st.timepoint,
 	st.shape_dist_traveled,
 	st.fare_units_traveled,
 
-    st.stop_sequence = (CASE WHEN $2 = 'arrival' THEN tb.start_sequence ELSE tb.end_sequence END),
+	st.stop_sequence = ev.terminal_sequence,
 	st.stop_sequence = tb.start_sequence,
-    st.stop_sequence = tb.end_sequence
+	st.stop_sequence = tb.end_sequence
 FROM gtfs_stop_times st
 JOIN gtfs_trips t
 	ON t.feed_ref = st.feed_ref
@@ -174,22 +182,24 @@ JOIN gtfs_calendar_dates cd
 JOIN gtfs_trip_bounds tb
 	ON tb.feed_ref = st.feed_ref
    AND tb.trip_id = st.trip_id
+CROSS JOIN LATERAL (
+	VALUES
+		(
+			'arrival'::gtfs_stop_event_mode,
+			st.arrival_time,
+			st.drop_off_type,
+			tb.start_sequence
+		),
+		(
+			'departure'::gtfs_stop_event_mode,
+			st.departure_time,
+			st.pickup_type,
+			tb.end_sequence
+		)
+) AS ev(mode, stop_time, event_type, terminal_sequence)
 WHERE st.feed_ref = $1
-AND (CASE WHEN $2 = 'arrival' THEN st.arrival_time ELSE st.departure_time END) IS NOT NULL;
-`
-
-var calculateStopEventsDeparture = ProjectorTask{
-	tableName: "gtfs_stop_events",
-	deps:      []string{"clear_stop_events", "import_stop_times", "import_trips", "import_routes", "import_agencies", "calc_trip_bounds"},
-	query:     stopEventsSQL,
-	extraArgs: []any{"departure"},
-}
-
-var calculateStopEventsArrival = ProjectorTask{
-	tableName: "gtfs_stop_events",
-	deps:      []string{"clear_stop_events", "import_stop_times", "import_trips", "import_routes", "import_agencies", "calc_trip_bounds"},
-	query:     stopEventsSQL,
-	extraArgs: []any{"arrival"},
+  AND ev.stop_time IS NOT NULL;
+	`,
 }
 
 var calculateRTTSequence = ProjectorTask{

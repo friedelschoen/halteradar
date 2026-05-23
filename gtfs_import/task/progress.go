@@ -119,9 +119,7 @@ func fmtDuration(dur time.Duration) string {
 	if dur.Seconds() < 60 {
 		return fmt.Sprintf("%.1fs", dur.Seconds())
 	} else {
-		min := dur.Minutes()
-		sec := min / 60
-		return fmt.Sprintf("%.0f:%02.0fmin", min, sec)
+		return fmt.Sprintf("%.0fmin", dur.Minutes())
 	}
 }
 

@@ -78,7 +78,3 @@ ON gtfs_trips (
 	realtime_trip_id
 );
 
-CREATE INDEX IF NOT EXISTS idx_stop_events_realtime
-ON gtfs_stop_events (
-	realtime_trip_id
-);

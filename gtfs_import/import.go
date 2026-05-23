@@ -184,6 +184,7 @@ var importStopsTask = ImportTask{
 				stop_id,
 				stop_code,
 				stop_name,
+				platform_code,
 				stop_lat,
 				stop_lon,
 				location_type,
@@ -195,7 +196,7 @@ var importStopsTask = ImportTask{
 		`,
 	rowProcessor: func(server *Server, row map[string]string) []any {
 		stopID := row["stop_id"]
-		if tr, ok := server.stops[stopID]; !ok || tr[0] != "" {
+		if _, ok := server.stops[stopID]; !ok {
 			return nil
 		}
 		return []any{
@@ -203,6 +204,7 @@ var importStopsTask = ImportTask{
 			stopID,
 			nullString(row["stop_code"]),
 			nullString(row["stop_name"]),
+			nullString(row["platform_code"]),
 			parseNullableFloat(row["stop_lat"]),
 			parseNullableFloat(row["stop_lon"]),
 			parseNullableInt(row["location_type"]),
@@ -269,7 +271,6 @@ var importStopTimesTask = ImportTask{
 				trip_id,
 				stop_sequence,
 				stop_id,
-				platform_code,
 				stop_headsign,
 				arrival_time,
 				departure_time,
@@ -285,18 +286,11 @@ var importStopTimesTask = ImportTask{
 		if _, ok := server.trips[tripID]; !ok {
 			return nil
 		}
-		stopID := row["stop_id"]
-		platformCode := ""
-		if tr, ok := server.stops[stopID]; ok && tr[0] != "" {
-			stopID = tr[0]
-			platformCode = tr[1]
-		}
 		return []any{
 			server.feedRef,
 			tripID,
 			parseInt(row["stop_sequence"]),
-			stopID,
-			nullString(platformCode),
+			row["stop_id"],
 			nullString(row["stop_headsign"]),
 			nullString(row["arrival_time"]),
 			nullString(row["departure_time"]),

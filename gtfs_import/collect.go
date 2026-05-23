@@ -64,13 +64,12 @@ var collectStopsTask = CollectTask{
 			}
 			parentStation := row["parent_station"]
 			if parentStation != "" {
-				server.stops[stopID] = [2]string{parentStation, row["platform_code"]}
 				stations[parentStation] = struct{}{}
 			}
 			return nil
 		})
 		for stop := range stations {
-			server.stops[stop] = [2]string{}
+			server.stops[stop] = struct{}{}
 		}
 		server.stopsCollected = true
 		return err
@@ -104,14 +103,14 @@ var collectTripsTask = CollectTask{
 var collectStopTimesTask = CollectTask{
 	deps: []string{"collect_trips"},
 	execute: func(server *Server, progress func(float64)) error {
-		server.stops = make(map[string][2]string)
+		server.stops = make(map[string]struct{})
 		return server.iterCSV(progress, "stop_times.txt", func(row map[string]string) error {
 			tripID := row["trip_id"]
 			if _, ok := server.trips[tripID]; !ok {
 				return nil
 			}
 			stopID := row["stop_id"]
-			server.stops[stopID] = [2]string{}
+			server.stops[stopID] = struct{}{}
 			return nil
 		})
 	},
