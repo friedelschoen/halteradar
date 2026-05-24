@@ -18,7 +18,7 @@
 		}
 	},
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$comment": "Source at https://github.com/friedelschoen/departures",
+	"$comment": "Source at https://github.com/friedelschoen/halteradar",
 	"title": "StopQuery",
 	"required": [
 		"stop_id",

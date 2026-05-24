@@ -52,7 +52,7 @@ SELECT
 	k.rd_y,
     k.lat,
     k.lon,
-    k.user_stop_code = e.stop_code as at_stop,
+    k.user_stop_code = s.stop_code as at_stop,
 
     (
         e.mode = 'departure'
@@ -81,4 +81,8 @@ WHERE e.mode = $1::gtfs_stop_event_mode
 		AND
 		now() + $4::interval
 ORDER BY
-	e.scheduled_time;
+	EXTRACT(EPOCH FROM e.scheduled_time)::bigint + CASE 
+		WHEN e.first_stop
+		THEN GREATEST(COALESCE(k.punctuality, 0), 0)
+		ELSE COALESCE(k.punctuality, 0)
+	END;

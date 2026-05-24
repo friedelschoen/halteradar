@@ -24,8 +24,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     import VehiclePage from "./pages/VehiclePage.svelte";
     import TripPage from "./pages/TripPage.svelte";
 
+    import logo from "./assets/logo.svg";
+
     export let url = "";
 </script>
+
+<h1 id="title"><img alt="logo" src={logo} height="50" /> HalteRadar</h1>
 
 <SearchBar />
 
@@ -52,8 +56,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 </Router>
 
 <footer class="footer">
-    &copy; 2026 Friedel Schön &mdash; Source hosted at
-    <a href="https://github.com/friedelschoen/departures" target="_blank">
+    &copy; 2026 Friedel Schön &mdash; 
+    Source hosted at <a href="https://github.com/friedelschoen/halteradar" target="_blank">
         GitHub
     </a>
 </footer>

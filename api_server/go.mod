@@ -1,4 +1,4 @@
-module github.com/friedelschoen/departures/api_server
+module github.com/friedelschoen/halteradar/api_server
 
 go 1.26.1
 

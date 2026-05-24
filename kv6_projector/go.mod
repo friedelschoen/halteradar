@@ -1,4 +1,4 @@
-module github.com/friedelschoen/departures/kv6_projector
+module github.com/friedelschoen/halteradar/kv6_projector
 
 go 1.26.1
 

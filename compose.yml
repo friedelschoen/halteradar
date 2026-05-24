@@ -15,7 +15,7 @@ services:
       - ./db_init:/docker-entrypoint-initdb.d:ro
 
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U departures -d departures"]
+      test: ["CMD-SHELL", "pg_isready -U halteradar -d halteradar"]
       interval: 1s
       timeout: 5s
       retries: 10

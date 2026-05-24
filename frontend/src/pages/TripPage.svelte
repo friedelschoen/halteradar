@@ -52,11 +52,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     }
 </script>
 
-<h1>Trip {trip}</h1>
+<h2>Trip {trip}</h2>
 
 <TripCard {trip} />
 
-<h2>Stops</h2>
+<h3>Stops</h3>
 
 {#if loadingStops}
     <p class="muted">Loading stops...</p>

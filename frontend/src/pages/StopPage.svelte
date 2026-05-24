@@ -175,10 +175,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         stopInfo = list[0] ?? null;
     }
 
-    async function loadEvents() {
+    async function loadEvents(mode) {
         if (!stop) return;
 
-        const eventPath = mode === "arrival" ? "arrivals" : "departures";
+        const eventPath = mode === "arrival" ? "arrivals" : "halteradar";
 
         [events, vehicles, routes] = await Promise.all([
             fetchJSON(
@@ -214,9 +214,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         }
     }
 
+    $: loadEvents(mode);
+
     onMount(() => {
         loadStopInfo();
-        loadEvents();
+        loadEvents(mode);
 
         const timer = setInterval(() => {
             loadEvents();
@@ -225,14 +227,14 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     });
 </script>
 
-<h1>
+<h2>
     {mode === "arrival" ? "Arrivals" : "Departures"}
     {#if stopInfo}
         for <i>{stopInfo.stop_name}</i>
     {/if}
-</h1>
+</h2>
 
-<h2>Routes</h2>
+<h3>Routes</h3>
 
 {#if routes.length}
     <div class="route-list">
@@ -250,7 +252,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     <div class="muted">No routes found.</div>
 {/if}
 
-<h2>Vehicles</h2>
+<h3>Vehicles</h3>
 
 <table>
     <thead>
@@ -334,7 +336,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     </tbody>
 </table>
 
-<h2>
+<h3>
     {mode === "arrival" ? "Arrivals" : "Departures"}
     <button
         class:mode-switch={true}
@@ -342,7 +344,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
         >&#8644;
         {mode === "arrival" ? "Departures" : "Arrivals"}
     </button>
-</h2>
+</h3>
 
 <table>
     <thead>
@@ -382,12 +384,15 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
                     class:terminal={d.terminal}
                     class:alert-high={d.warning}
                     class:open
-                    on:click={() => (openTrip = d.trip_id)}
+                    on:click={() => (openTrip = openTrip === d.trip_id ? null : d.trip_id)} 
                 >
                     <td class="toggle-cell">{open ? "▾" : "▸"}</td>
                     <td style="text-align: center;">{d.platform_code ?? ""}</td>
                     <td style={lineStyle(d)}>{d.route_short_name}</td>
-                    <td class:at-stop={d.at_stop}>{d.headsign}</td>
+                    <td class:at-stop={d.at_stop}>{d.headsign}
+                        {#if d.status}<i class="fa-solid fa-tower-broadcast"></i>{/if}
+                        {#if d.status == "OFFROUTE"}<i class="fa-solid fa-road-circle-xmark"></i>{/if}
+                    </td>
                     <td>
                         {#if d.punctuality == 0}
                             <b>{hhmm(scheduled)}</b>

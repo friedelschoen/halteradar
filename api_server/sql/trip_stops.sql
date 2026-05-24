@@ -22,9 +22,9 @@ SELECT DISTINCT ON (
 	e.mode::text,
 	e.stop_sequence,
 	e.stop_id,
-	e.stop_code,
-	e.stop_name,
-	e.platform_code,
+	s.stop_code,
+	s.stop_name,
+	s.platform_code,
 
 	EXTRACT(EPOCH FROM e.scheduled_time)::bigint AS scheduled_time,
 
@@ -34,17 +34,19 @@ SELECT DISTINCT ON (
 	kt.block_code,
 	k.punctuality
 FROM active_gtfs_stop_events e
+JOIN active_gtfs_stops s 
+    ON s.stop_id = e.stop_id
 LEFT JOIN kv6_trip_stop_status k
 	ON k.operating_day = current_date
    AND k.realtime_trip_id = e.realtime_trip_id
-   AND k.user_stop_code = e.stop_code
+   AND k.user_stop_code = s.stop_code
    AND (
        (e.mode = 'arrival' AND k.status IN ('ARRIVAL', 'ONROUTE'))
      OR (e.mode = 'departure' AND k.status IN ('DEPARTURE', 'ONROUTE'))
 )
 LEFT JOIN kv6_current_trip kt 
 	ON k.operating_day = current_date
-   AND k.realtime_trip_id = e.realtime_trip_id
+   AND kt.realtime_trip_id = k.realtime_trip_id
 WHERE e.trip_id = $1 
     AND NOT e.terminal
 ORDER BY

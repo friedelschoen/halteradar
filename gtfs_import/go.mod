@@ -1,4 +1,4 @@
-module github.com/friedelschoen/departures/gtfs_import
+module github.com/friedelschoen/halteradar/gtfs_import
 
 go 1.26.1
 

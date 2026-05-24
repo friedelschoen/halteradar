@@ -52,7 +52,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     }
 </script>
 
-<h1>{title}</h1>
+<h2>{title}</h2>
 
 {#if loading}
     <p class="muted">Loading trips...</p>

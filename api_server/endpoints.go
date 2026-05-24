@@ -63,14 +63,10 @@ var querySQL string
 
 func intervalParam(req *http.Request, name string, def string) string {
 	v := req.URL.Query().Get(name)
-	switch v {
-	case "":
-		return def
-	case "5 minutes", "15 minutes", "30 minutes", "1 hour", "2 hours", "4 hours", "6 hours":
-		return v
-	default:
+	if v == "" {
 		return def
 	}
+	return v
 }
 
 var mux APIHandleMux = []APIHandler{
@@ -105,7 +101,7 @@ var mux APIHandleMux = []APIHandler{
 
 	SQLHandler{
 		Methods:  []string{"GET"},
-		Endpoint: "/api/stop/:stop/departures",
+		Endpoint: "/api/stop/:stop/halteradar",
 		Title:    "StopDeparture",
 		Query:    stopDepartureSQL,
 		ArgsFn: func(req *http.Request, params map[string]string) ([]any, error) {

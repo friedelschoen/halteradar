@@ -32,7 +32,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/friedelschoen/departures/gtfs_import/task"
+	"github.com/friedelschoen/halteradar/gtfs_import/task"
 	_ "github.com/lib/pq"
 )
 
@@ -413,7 +413,7 @@ var tasks = map[string]task.Task[*Server]{
 		},
 	},
 	"activate": Task{
-		deps: []string{"feed_ref"},
+		deps: []string{"import_all", "calc_all"},
 		execute: func(server *Server, progress func(float64)) error {
 			tx, err := server.db.Begin()
 			if err != nil {
